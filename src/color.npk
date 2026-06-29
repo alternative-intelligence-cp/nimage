@@ -1,0 +1,16 @@
+// color.npk
+
+// PNG-style color types
+pub fixed int32:COLOR_GRAYSCALE  = 0i32;
+pub fixed int32:COLOR_RGB        = 2i32;
+pub fixed int32:COLOR_INDEXED    = 3i32;
+pub fixed int32:COLOR_GRAY_ALPHA = 4i32;
+pub fixed int32:COLOR_RGBA       = 6i32;
+
+// Represent a single RGBA pixel 
+pub struct:PixelRGBA = {
+    int32:r;
+    int32:g;
+    int32:b;
+    int32:a;
+};

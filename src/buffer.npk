@@ -1,0 +1,66 @@
+// buffer.npk
+use "color.npk".*;
+
+pub struct:ImageBuffer = {
+    int64:data; // Raw dynamically allocated bytes
+    int32:width;
+    int32:height;
+    int32:stride;
+    int32:color_type;
+};
+
+pub func:imagebuffer_init = NIL(wild ImageBuffer-> : buf, int32:width, int32:height, int32:color_type) {
+    buf->width = width;
+    buf->height = height;
+    buf->color_type = color_type;
+    
+    // Stub: compute stride based on color type
+    // e.g., if RGBA (4 bytes per pixel), stride = width * 4;
+    buf->stride = width * 4i32; 
+    
+    // In actual logic, we would use raw npk_core_alloc(stride * height);
+    buf->data = 0i64; // Stub
+    pass;
+};
+
+// pixel getter/setter stubs
+pub func:imagebuffer_set_pixel = NIL(wild ImageBuffer-> : buf, int32:x, int32:y, wild PixelRGBA-> : pixel) {
+    // Stub
+    pass;
+};
+
+pub func:imagebuffer_get_pixel = NIL(wild ImageBuffer-> : buf, int32:x, int32:y, wild PixelRGBA-> : out_pixel) {
+    // Stub
+    pass;
+};
+
+// Iterator for fast traversal
+pub struct:ImageIterator = {
+    int64:buffer_ptr;
+    int32:x;
+    int32:y;
+    int32:max_x;
+    int32:max_y;
+};
+
+pub func:imageiter_init = NIL(wild ImageIterator-> : iter, wild ImageBuffer-> : buf) {
+    iter->buffer_ptr = buf->data;
+    iter->x = 0i32;
+    iter->y = 0i32;
+    iter->max_x = buf->width;
+    iter->max_y = buf->height;
+    pass;
+};
+
+// Returns 1 if successful (moved to next), 0 if at end
+pub func:imageiter_next = int32(wild ImageIterator-> : iter) {
+    iter->x = iter->x + 1i32;
+    if (iter->x == iter->max_x) {
+        iter->x = 0i32;
+        iter->y = iter->y + 1i32;
+    }
+    if (iter->y == iter->max_y) {
+        pass 0i32;
+    }
+    pass 1i32;
+};
