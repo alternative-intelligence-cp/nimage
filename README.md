@@ -1,2 +1,5 @@
 # nimage
-Nitpick native image library
+Nitpick native image library.
+
+### Status
+Coming soon.
