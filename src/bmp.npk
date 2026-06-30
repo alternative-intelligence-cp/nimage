@@ -1,0 +1,50 @@
+// bmp.npk
+use "errors.npk".*;
+use "buffer.npk".*;
+use "color.npk".*;
+
+pub struct:BmpFileHeader = {
+    int32:file_size;
+    int32:pixel_offset;
+};
+
+pub struct:BmpDibHeader = {
+    int32:header_size;
+    int32:width;
+    int32:height;
+    int32:bpp;
+    int32:compression;
+};
+
+pub func:bmp_parse_file_header = int32(wild BmpFileHeader-> : header, int64:data) {
+    // Stub: Read 14 bytes
+    // Check 'BM' magic
+    // header->file_size = ...
+    // header->pixel_offset = ...
+    header->file_size = 0i32;
+    header->pixel_offset = 0i32;
+    pass ERR_OK;
+};
+
+pub func:bmp_parse_dib_header = int32(wild BmpDibHeader-> : header, int64:data) {
+    // Stub: Read DIB size (40, 108, 124, etc.)
+    // header->width = ...
+    // header->height = ... (negative means top-down)
+    // header->bpp = ...
+    // header->compression = ...
+    header->header_size = 40i32;
+    header->width = 0i32;
+    header->height = 0i32;
+    header->bpp = 24i32;
+    header->compression = 0i32; // BI_RGB
+    pass ERR_OK;
+};
+
+pub func:bmp_decode_pixels = int32(wild ImageBuffer-> : out_buf, int64:pixel_data, wild BmpDibHeader-> : header) {
+    // Stub: Check if header->compression == 0i32 (BI_RGB)
+    // Stub: Loop through rows
+    // Handle 4-byte row padding: padding = (4 - ((width * bpp / 8) % 4)) % 4
+    // Read BGR pixels and write as RGB into ImageBuffer
+    // Handle top-down vs bottom-up using header->height sign
+    pass ERR_OK;
+};

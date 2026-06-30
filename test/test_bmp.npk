@@ -1,0 +1,24 @@
+use "../src/bmp.npk".*;
+use "../src/buffer.npk".*;
+use "../src/errors.npk".*;
+
+pub func:failsafe = int32(tbb32:err) { drop(err);
+    exit(1i32);
+};
+
+pub func:main = int32() {
+    BmpFileHeader:fhdr = BmpFileHeader{file_size: 0i32, pixel_offset: 0i32};
+    drop(bmp_parse_file_header(@fhdr, 0i64));
+    
+    BmpDibHeader:dhdr = BmpDibHeader{header_size: 0i32, width: 0i32, height: 0i32, bpp: 0i32, compression: 0i32};
+    drop(bmp_parse_dib_header(@dhdr, 0i64));
+    
+    ImageBuffer:buf = ImageBuffer{data: 0i64, width: 0i32, height: 0i32, stride: 0i32, color_type: 0i32};
+    drop(bmp_decode_pixels(@buf, 0i64, @dhdr));
+    
+    drop(fhdr);
+    drop(dhdr);
+    drop(buf);
+    
+    exit(0i32);
+};
