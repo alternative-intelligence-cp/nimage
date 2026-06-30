@@ -1,0 +1,59 @@
+// gif.npk
+use "errors.npk".*;
+use "buffer.npk".*;
+use "color.npk".*;
+
+pub struct:GifLogicalScreen = {
+    int32:width;
+    int32:height;
+    int32:has_gct;
+    int32:gct_size;
+    int32:bg_color_index;
+    int32:pixel_aspect_ratio;
+};
+
+pub struct:GifImageDescriptor = {
+    int32:left;
+    int32:top;
+    int32:width;
+    int32:height;
+    int32:has_lct;
+    int32:lct_size;
+    int32:interlaced;
+};
+
+// Check the 6-byte GIF signature (GIF87a or GIF89a)
+pub func:gif_check_signature = int32(int64:data_ptr) {
+    // Stub: Check if the 6 bytes at data_ptr match GIF87a or GIF89a
+    pass 1i32; // Returns 1 if valid, 0 if invalid
+};
+
+pub func:gif_parse_logical_screen = int32(wild GifLogicalScreen-> : screen, int64:data) {
+    // Stub: Read 7 bytes
+    screen->width = 0i32;
+    screen->height = 0i32;
+    screen->has_gct = 0i32;
+    screen->gct_size = 0i32;
+    screen->bg_color_index = 0i32;
+    screen->pixel_aspect_ratio = 0i32;
+    pass ERR_OK;
+};
+
+pub func:gif_parse_image_descriptor = int32(wild GifImageDescriptor-> : desc, int64:data) {
+    // Stub: Read 9 bytes after 0x2C separator
+    desc->left = 0i32;
+    desc->top = 0i32;
+    desc->width = 0i32;
+    desc->height = 0i32;
+    desc->has_lct = 0i32;
+    desc->lct_size = 0i32;
+    desc->interlaced = 0i32;
+    pass ERR_OK;
+};
+
+// Stub: Decompress LZW image data using ncompress::lzw
+pub func:gif_decode_lzw = int32(wild ImageBuffer-> : out_buf, int64:compressed_data, int32:min_code_size, int64:color_table) {
+    // Stub: Call ncompress lzw_decompress(compressed_data) -> indices
+    // Stub: Map output indices to the active color table and produce an ImageBuffer
+    pass ERR_OK;
+};

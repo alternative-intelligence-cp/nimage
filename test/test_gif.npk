@@ -1,0 +1,32 @@
+use "../src/gif.npk".*;
+use "../src/buffer.npk".*;
+use "../src/errors.npk".*;
+
+pub func:failsafe = int32(tbb32:err) { drop(err);
+    exit(1i32);
+};
+
+pub func:main = int32() {
+    drop(gif_check_signature(0i64));
+    
+    GifLogicalScreen:screen = GifLogicalScreen{
+        width: 0i32, height: 0i32, has_gct: 0i32, 
+        gct_size: 0i32, bg_color_index: 0i32, pixel_aspect_ratio: 0i32
+    };
+    drop(gif_parse_logical_screen(@screen, 0i64));
+    
+    GifImageDescriptor:desc = GifImageDescriptor{
+        left: 0i32, top: 0i32, width: 0i32, height: 0i32, 
+        has_lct: 0i32, lct_size: 0i32, interlaced: 0i32
+    };
+    drop(gif_parse_image_descriptor(@desc, 0i64));
+    
+    ImageBuffer:buf = ImageBuffer{data: 0i64, width: 0i32, height: 0i32, stride: 0i32, color_type: 0i32};
+    drop(gif_decode_lzw(@buf, 0i64, 8i32, 0i64));
+    
+    drop(screen);
+    drop(desc);
+    drop(buf);
+    
+    exit(0i32);
+};

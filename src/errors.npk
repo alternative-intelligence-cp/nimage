@@ -6,3 +6,6 @@ pub fixed int32:ERR_PNG_UNSUPPORTED = -103i32;
 
 pub fixed int32:ERR_BMP_BAD_SIGNATURE = -201i32;
 pub fixed int32:ERR_BMP_UNSUPPORTED = -202i32;
+
+pub fixed int32:ERR_GIF_BAD_SIGNATURE = -301i32;
+pub fixed int32:ERR_GIF_UNSUPPORTED = -302i32;
