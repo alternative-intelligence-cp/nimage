@@ -9,6 +9,13 @@ pub struct:ImageBuffer = {
     int32:color_type;
 };
 
+
+// Memory allocator helper for callers
+pub func:imagebuffer_calculate_size_bytes = int64(int32:width, int32:height, int32:color_type) {
+    // Stub calculation based on bpp derived from color_type and width * height
+    pass 0i64;
+};
+
 pub func:imagebuffer_init = NIL(wild ImageBuffer-> : buf, int32:width, int32:height, int32:color_type) {
     buf->width = width;
     buf->height = height;

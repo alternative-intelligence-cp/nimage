@@ -14,3 +14,21 @@ pub struct:PixelRGBA = {
     int32:b;
     int32:a;
 };
+
+// Convert RGB to RGBA
+pub func:color_rgb_to_rgba = int32(wild PixelRGBA-> : out_pixel, int32:r, int32:g, int32:b) {
+    out_pixel->r = r;
+    out_pixel->g = g;
+    out_pixel->b = b;
+    out_pixel->a = 255i32;
+    pass 0i32; // return ERR_OK basically
+};
+
+// Convert Grayscale to RGBA
+pub func:color_grayscale_to_rgba = int32(wild PixelRGBA-> : out_pixel, int32:luma) {
+    out_pixel->r = luma;
+    out_pixel->g = luma;
+    out_pixel->b = luma;
+    out_pixel->a = 255i32;
+    pass 0i32;
+};

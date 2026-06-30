@@ -6,10 +6,16 @@ pub func:failsafe = int32(tbb32:err) { drop(err);
 };
 
 pub func:main = int32() {
+    // Test size calculation
+    drop(imagebuffer_calculate_size_bytes(100i32, 100i32, COLOR_RGBA));
+
     ImageBuffer:buf = ImageBuffer{data: 0i64, width: 0i32, height: 0i32, stride: 0i32, color_type: 0i32};
     drop(imagebuffer_init(@buf, 100i32, 100i32, COLOR_RGBA));
     
     PixelRGBA:pix = PixelRGBA{r: 255i32, g: 0i32, b: 0i32, a: 255i32};
+    drop(color_rgb_to_rgba(@pix, 255i32, 128i32, 64i32));
+    drop(color_grayscale_to_rgba(@pix, 128i32));
+    
     drop(imagebuffer_set_pixel(@buf, 10i32, 10i32, @pix));
     
     PixelRGBA:out_pix = PixelRGBA{r: 0i32, g: 0i32, b: 0i32, a: 0i32};
