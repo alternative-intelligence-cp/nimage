@@ -1,0 +1,19 @@
+// png_filter.npk
+use "errors.npk".*;
+
+pub fixed int32:FILTER_NONE    = 0i32;
+pub fixed int32:FILTER_SUB     = 1i32;
+pub fixed int32:FILTER_UP      = 2i32;
+pub fixed int32:FILTER_AVERAGE = 3i32;
+pub fixed int32:FILTER_PAETH   = 4i32;
+
+// Unfilter a single scanline in place based on previous scanline and bytes per pixel (bpp)
+pub func:png_unfilter_scanline = int32(int32:filter_type, int64:curr_ptr, int64:prev_ptr, int32:bpp, int32:width_bytes) {
+    // Stub: switch on filter_type
+    // None: do nothing
+    // Sub: curr[x] = curr[x] + curr[x-bpp]
+    // Up: curr[x] = curr[x] + prev[x]
+    // Average: curr[x] = curr[x] + floor((curr[x-bpp] + prev[x]) / 2)
+    // Paeth: curr[x] = curr[x] + PaethPredictor(curr[x-bpp], prev[x], prev[x-bpp])
+    pass ERR_OK;
+};

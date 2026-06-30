@@ -1,0 +1,35 @@
+use "../src/png.npk".*;
+use "../src/png_filter.npk".*;
+use "../src/errors.npk".*;
+use "../src/buffer.npk".*;
+use "../src/color.npk".*;
+
+pub func:failsafe = int32(tbb32:err) { drop(err);
+    exit(1i32);
+};
+
+pub func:main = int32() {
+    // Test unfilter
+    drop(png_unfilter_scanline(FILTER_PAETH, 0i64, 0i64, 4i32, 100i32));
+    
+    // Test decode idat
+    drop(png_decode_idat(0i64, 100i64, 0i64));
+    
+    // Test synthesize
+    ImageBuffer:buf = ImageBuffer{data: 0i64, width: 0i32, height: 0i32, stride: 0i32, color_type: 0i32};
+    PngHeader:header = PngHeader{
+        width: 0i32,
+        height: 0i32,
+        bit_depth: 0i32,
+        color_type: 0i32,
+        compression_method: 0i32,
+        filter_method: 0i32,
+        interlace_method: 0i32
+    };
+    drop(png_synthesize_buffer(@buf, 0i64, @header));
+    
+    drop(buf);
+    drop(header);
+    
+    exit(0i32);
+};

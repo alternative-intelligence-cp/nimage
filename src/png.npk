@@ -1,5 +1,7 @@
 // png.npk
 use "errors.npk".*;
+use "buffer.npk".*;
+use "png_filter.npk".*;
 
 pub struct:PngHeader = {
     int32:width;
@@ -54,3 +56,17 @@ pub func:pngchunkreader_next_chunk = int32(wild PngChunkReader-> : reader, int64
     // Call ncompress CRC32 to verify
     pass ERR_OK;
 };
+
+// Stub: Decompress aggregated IDAT payload using ncompress::zlib
+pub func:png_decode_idat = int32(int64:compressed_data, int64:compressed_len, int64:out_data) {
+    // Stub: Call ncompress zlib_decompress(compressed_data) -> out_data
+    // Stub: Loop through out_data scanlines, calling png_unfilter_scanline
+    pass ERR_OK;
+};
+
+// Stub: Synthesize ImageBuffer from unfiltered bytes
+pub func:png_synthesize_buffer = int32(wild ImageBuffer-> : buf, int64:unfiltered_data, wild PngHeader-> : header) {
+    // Stub: Map PNG color space into standard ImageBuffer pixels (e.g. RGBA)
+    pass ERR_OK;
+};
+
