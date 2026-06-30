@@ -1,0 +1,56 @@
+// png.npk
+use "errors.npk".*;
+
+pub struct:PngHeader = {
+    int32:width;
+    int32:height;
+    int32:bit_depth;
+    int32:color_type;
+    int32:compression_method;
+    int32:filter_method;
+    int32:interlace_method;
+};
+
+// Check the 8-byte PNG signature
+pub func:png_check_signature = int32(int64:data_ptr) {
+    // Stub: Check if the 8 bytes at data_ptr match \x89PNG\r\n\x1a\n
+    pass 1i32; // Returns 1 if valid, 0 if invalid
+};
+
+pub func:png_parse_ihdr = int32(wild PngHeader-> : header, int64:chunk_data) {
+    // Stub: Parse width, height, etc.
+    header->width = 0i32; // Read from chunk
+    header->height = 0i32;
+    header->bit_depth = 8i32;
+    header->color_type = 6i32; // RGBA
+    header->compression_method = 0i32;
+    header->filter_method = 0i32;
+    header->interlace_method = 0i32;
+    
+    // Check unsupported combinations
+    if (header->interlace_method != 0i32) {
+        pass ERR_PNG_UNSUPPORTED;
+    }
+    pass ERR_OK;
+};
+
+pub struct:PngChunkReader = {
+    int64:data;
+    int64:len;
+    int64:pos;
+};
+
+pub func:pngchunkreader_init = NIL(wild PngChunkReader-> : reader, int64:data_ptr, int64:data_len) {
+    reader->data = data_ptr;
+    reader->len = data_len;
+    reader->pos = 8i64; // Skip signature
+    pass;
+};
+
+pub func:pngchunkreader_next_chunk = int32(wild PngChunkReader-> : reader, int64:out_type, int64:out_data, int64:out_len) {
+    // Stub: Read 4-byte length, 4-byte chunk type
+    // out_type could hold an integer mapping or just a 4-byte char string logic
+    // Read chunk data, read 4-byte CRC
+    // Call ncompress CRC32 to verify
+    pass ERR_OK;
+};
