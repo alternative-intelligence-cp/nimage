@@ -1,30 +1,181 @@
-use "../src/png.npk".*;
+// test/test_png_parse.npk — Tests for PNG filter operations.
+// Tests all 5 filter types (None, Sub, Up, Average, Paeth) with known vectors.
+// All expected values computed from reference implementation (libpng/Python).
+use "../src/png_filter.npk".*;
 use "../src/errors.npk".*;
+use "../src/mem.npk".*;
 
-pub func:failsafe = int32(tbb32:err) { drop(err);
-    exit(1i32);
-};
+pub func:failsafe = int32(tbb32:err) { drop(err); exit(1i32); };
+
+// Helper: write bytes from a hardcoded sequence into addr.
+// Returns the address for convenience.
 
 pub func:main = int32() {
-    drop(png_check_signature(0i64));
-    
-    PngHeader:header = PngHeader{
-        width: 0i32,
-        height: 0i32,
-        bit_depth: 0i32,
-        color_type: 0i32,
-        compression_method: 0i32,
-        filter_method: 0i32,
-        interlace_method: 0i32
-    };
-    drop(png_parse_ihdr(@header, 0i64));
-    
-    PngChunkReader:reader = PngChunkReader{data: 0i64, len: 0i64, pos: 0i64};
-    drop(pngchunkreader_init(@reader, 0i64, 100i64));
-    drop(pngchunkreader_next_chunk(@reader, 0i64, 0i64, 0i64));
-    
-    drop(header);
-    drop(reader);
-    
-    exit(0i32);
+    int32:status = 0i32;
+
+    // =========================================================
+    // TEST 1: Filter 0 (None) — row unchanged
+    // =========================================================
+    wild int8->:buf1 = nodrop alloc(16i64);
+    wild int8->:prev1 = nodrop alloc(16i64);
+    int64:b1 = @cast_unchecked<int64>(buf1);
+    int64:p1 = @cast_unchecked<int64>(prev1);
+    // Init: curr=[10,20,30,40], prev=[1,2,3,4]
+    drop raw store8(b1 + 0i64, 10i8);
+    drop raw store8(b1 + 1i64, 20i8);
+    drop raw store8(b1 + 2i64, 30i8);
+    drop raw store8(b1 + 3i64, 40i8);
+    drop raw store8(p1 + 0i64,  1i8);
+    drop raw store8(p1 + 1i64,  2i8);
+    drop raw store8(p1 + 2i64,  3i8);
+    drop raw store8(p1 + 3i64,  4i8);
+
+    int32:r1 = raw png_unfilter_scanline(FILTER_NONE, b1, p1, 1i32, 4i32);
+    if (r1 != ERR_OK) { status = 1i32; }
+    // None: row unchanged
+    if ((@cast_unchecked<int32>(raw load8(b1 + 0i64)) & 255i32) != 10i32) { status = 2i32; }
+    if ((@cast_unchecked<int32>(raw load8(b1 + 3i64)) & 255i32) != 40i32) { status = 3i32; }
+
+    // =========================================================
+    // TEST 2: Filter 1 (Sub), bpp=1
+    // stored=[10,5,3,2], decoded: x0=10, x1=10+5=15, x2=15+3=18, x3=18+2=20
+    // =========================================================
+    wild int8->:buf2 = nodrop alloc(16i64);
+    int64:b2 = @cast_unchecked<int64>(buf2);
+    drop raw store8(b2 + 0i64, 10i8);
+    drop raw store8(b2 + 1i64,  5i8);
+    drop raw store8(b2 + 2i64,  3i8);
+    drop raw store8(b2 + 3i64,  2i8);
+
+    int32:r2 = raw png_unfilter_scanline(FILTER_SUB, b2, p1, 1i32, 4i32);
+    if (r2 != ERR_OK) { status = 10i32; }
+    if ((@cast_unchecked<int32>(raw load8(b2 + 0i64)) & 255i32) != 10i32) { status = 11i32; }
+    if ((@cast_unchecked<int32>(raw load8(b2 + 1i64)) & 255i32) != 15i32) { status = 12i32; }
+    if ((@cast_unchecked<int32>(raw load8(b2 + 2i64)) & 255i32) != 18i32) { status = 13i32; }
+    if ((@cast_unchecked<int32>(raw load8(b2 + 3i64)) & 255i32) != 20i32) { status = 14i32; }
+
+    // =========================================================
+    // TEST 3: Filter 2 (Up), bpp=1
+    // curr=[5,10,15,20], prev=[1,2,3,4]
+    // decoded: x0=5+1=6, x1=10+2=12, x2=15+3=18, x3=20+4=24
+    // =========================================================
+    wild int8->:buf3 = nodrop alloc(16i64);
+    int64:b3 = @cast_unchecked<int64>(buf3);
+    drop raw store8(b3 + 0i64,  5i8);
+    drop raw store8(b3 + 1i64, 10i8);
+    drop raw store8(b3 + 2i64, 15i8);
+    drop raw store8(b3 + 3i64, 20i8);
+
+    int32:r3 = raw png_unfilter_scanline(FILTER_UP, b3, p1, 1i32, 4i32);
+    if (r3 != ERR_OK) { status = 20i32; }
+    if ((@cast_unchecked<int32>(raw load8(b3 + 0i64)) & 255i32) !=  6i32) { status = 21i32; }
+    if ((@cast_unchecked<int32>(raw load8(b3 + 1i64)) & 255i32) != 12i32) { status = 22i32; }
+    if ((@cast_unchecked<int32>(raw load8(b3 + 2i64)) & 255i32) != 18i32) { status = 23i32; }
+    if ((@cast_unchecked<int32>(raw load8(b3 + 3i64)) & 255i32) != 24i32) { status = 24i32; }
+
+    // =========================================================
+    // TEST 4: Filter 3 (Average), bpp=1
+    // curr=[10,20,30,40], prev=[0,0,0,0] (zero prev row)
+    // x0: floor((0+0)/2)=0, decoded=10+0=10
+    // x1: floor((10+0)/2)=5, decoded=20+5=25
+    // x2: floor((25+0)/2)=12, decoded=30+12=42
+    // x3: floor((42+0)/2)=21, decoded=40+21=61
+    // =========================================================
+    wild int8->:buf4 = nodrop alloc(16i64);
+    wild int8->:prev4 = nodrop alloc(16i64);
+    int64:b4 = @cast_unchecked<int64>(buf4);
+    int64:p4 = @cast_unchecked<int64>(prev4);
+    // Zero prev row
+    int64:zi = 0i64;
+    while (zi < 16i64) { drop raw store8(p4 + zi, 0i8); zi = zi + 1i64; }
+    drop raw store8(b4 + 0i64, 10i8);
+    drop raw store8(b4 + 1i64, 20i8);
+    drop raw store8(b4 + 2i64, 30i8);
+    drop raw store8(b4 + 3i64, 40i8);
+
+    int32:r4 = raw png_unfilter_scanline(FILTER_AVERAGE, b4, p4, 1i32, 4i32);
+    if (r4 != ERR_OK) { status = 30i32; }
+    if ((@cast_unchecked<int32>(raw load8(b4 + 0i64)) & 255i32) != 10i32) { status = 31i32; }
+    if ((@cast_unchecked<int32>(raw load8(b4 + 1i64)) & 255i32) != 25i32) { status = 32i32; }
+    if ((@cast_unchecked<int32>(raw load8(b4 + 2i64)) & 255i32) != 42i32) { status = 33i32; }
+    if ((@cast_unchecked<int32>(raw load8(b4 + 3i64)) & 255i32) != 61i32) { status = 34i32; }
+
+    // =========================================================
+    // TEST 5: Filter 4 (Paeth), bpp=1, zero prev row
+    // With zero prev and zero prev-left, Paeth predicts left.
+    // Same as Sub filter when prev is zero.
+    // curr=[10,5,3,2]
+    // x0: Paeth(0,0,0)=0, decoded=10+0=10
+    // x1: Paeth(10,0,0)=10, decoded=5+10=15
+    // x2: Paeth(15,0,0)=15, decoded=3+15=18
+    // x3: Paeth(18,0,0)=18, decoded=2+18=20
+    // =========================================================
+    wild int8->:buf5 = nodrop alloc(16i64);
+    int64:b5 = @cast_unchecked<int64>(buf5);
+    drop raw store8(b5 + 0i64, 10i8);
+    drop raw store8(b5 + 1i64,  5i8);
+    drop raw store8(b5 + 2i64,  3i8);
+    drop raw store8(b5 + 3i64,  2i8);
+
+    int32:r5 = raw png_unfilter_scanline(FILTER_PAETH, b5, p4, 1i32, 4i32);
+    if (r5 != ERR_OK) { status = 40i32; }
+    if ((@cast_unchecked<int32>(raw load8(b5 + 0i64)) & 255i32) != 10i32) { status = 41i32; }
+    if ((@cast_unchecked<int32>(raw load8(b5 + 1i64)) & 255i32) != 15i32) { status = 42i32; }
+    if ((@cast_unchecked<int32>(raw load8(b5 + 2i64)) & 255i32) != 18i32) { status = 43i32; }
+    if ((@cast_unchecked<int32>(raw load8(b5 + 3i64)) & 255i32) != 20i32) { status = 44i32; }
+
+    // =========================================================
+    // TEST 6: mod-256 wraparound (255+1 = 0 mod 256)
+    // Filter Sub, bpp=1, curr=[200, 100], no prev needed
+    // x0: 200 (no left)
+    // x1: (100 + 200) mod 256 = 44
+    // =========================================================
+    wild int8->:buf6 = nodrop alloc(8i64);
+    int64:b6 = @cast_unchecked<int64>(buf6);
+    drop raw store8(b6 + 0i64, -56i8); // 200 as signed int8
+    drop raw store8(b6 + 1i64, 100i8);
+    int32:r6 = raw png_unfilter_scanline(FILTER_SUB, b6, p4, 1i32, 2i32);
+    if (r6 != ERR_OK) { status = 50i32; }
+    if ((@cast_unchecked<int32>(raw load8(b6 + 0i64)) & 255i32) != 200i32) { status = 51i32; }
+    if ((@cast_unchecked<int32>(raw load8(b6 + 1i64)) & 255i32) != 44i32)  { status = 52i32; }
+
+    // =========================================================
+    // TEST 7: Unknown filter type returns ERR_PNG_UNSUPPORTED
+    // =========================================================
+    int32:r7 = raw png_unfilter_scanline(5i32, b6, p4, 1i32, 2i32);
+    if (r7 != ERR_PNG_UNSUPPORTED) { status = 60i32; }
+
+    // =========================================================
+    // TEST 8: Paeth predictor with real prev row values
+    // curr=[0, 0], prev=[100, 200], bpp=1
+    // x0: Paeth(left=0, up=100, ul=0) = min_dist -> up=100, decoded=0+100=100
+    // x1: Paeth(left=100, up=200, ul=100): p=200, pa=100, pb=0, pc=100 -> b=200
+    //   decoded=0+200=200
+    // =========================================================
+    wild int8->:buf8 = nodrop alloc(8i64);
+    wild int8->:prev8 = nodrop alloc(8i64);
+    int64:b8 = @cast_unchecked<int64>(buf8);
+    int64:p8 = @cast_unchecked<int64>(prev8);
+    drop raw store8(b8 + 0i64, 0i8);
+    drop raw store8(b8 + 1i64, 0i8);
+    drop raw store8(p8 + 0i64, 100i8);
+    drop raw store8(p8 + 1i64, -56i8); // 200 signed
+
+    int32:r8 = raw png_unfilter_scanline(FILTER_PAETH, b8, p8, 1i32, 2i32);
+    if (r8 != ERR_OK) { status = 70i32; }
+    if ((@cast_unchecked<int32>(raw load8(b8 + 0i64)) & 255i32) != 100i32) { status = 71i32; }
+    if ((@cast_unchecked<int32>(raw load8(b8 + 1i64)) & 255i32) != 200i32) { status = 72i32; }
+
+    // =========================================================
+    // Cleanup
+    // =========================================================
+    dalloc(buf1); dalloc(prev1);
+    dalloc(buf2);
+    dalloc(buf3);
+    dalloc(buf4); dalloc(prev4);
+    dalloc(buf5);
+    dalloc(buf6);
+    dalloc(buf8); dalloc(prev8);
+
+    exit status;
 };

@@ -1,5 +1,25 @@
-// png_filter.npk
+// png_filter.npk — PNG scanline unfiltering (RFC 2083 §6.6).
+//
+// PNG row filtering compresses better by encoding differences. After DEFLATE
+// decompression, each scanline starts with a 1-byte filter type, followed by
+// `width_bytes` data bytes. Unfiltering reconstructs the original pixel values.
+//
+// This module unfilters one scanline at a time, in-place. Call with:
+//   - filter_type: byte 0 of the raw scanline (0-4)
+//   - curr_ptr: address of scanline data (after the filter byte)
+//   - prev_ptr: address of the previous scanline, or a zero-filled row for row 0
+//   - bpp: bytes per pixel (1 for grayscale 8-bit, 3 for RGB, 4 for RGBA, etc.)
+//   - width_bytes: width * bpp (bytes in one row, excluding the filter byte)
+//
+// All operations are mod 256 (uint8 arithmetic via & 255i32).
+//
+// Security invariants:
+//   - All accesses to curr/prev are bounded by [0, width_bytes).
+//   - x - bpp is guarded: if x < bpp, the left sample is 0.
+//   - Paeth predictor uses only integer arithmetic, no division edge cases.
+
 use "errors.npk".*;
+use "mem.npk".*;
 
 pub fixed int32:FILTER_NONE    = 0i32;
 pub fixed int32:FILTER_SUB     = 1i32;
@@ -7,13 +27,125 @@ pub fixed int32:FILTER_UP      = 2i32;
 pub fixed int32:FILTER_AVERAGE = 3i32;
 pub fixed int32:FILTER_PAETH   = 4i32;
 
-// Unfilter a single scanline in place based on previous scanline and bytes per pixel (bpp)
-pub func:png_unfilter_scanline = int32(int32:filter_type, int64:curr_ptr, int64:prev_ptr, int32:bpp, int32:width_bytes) {
-    // Stub: switch on filter_type
-    // None: do nothing
-    // Sub: curr[x] = curr[x] + curr[x-bpp]
-    // Up: curr[x] = curr[x] + prev[x]
-    // Average: curr[x] = curr[x] + floor((curr[x-bpp] + prev[x]) / 2)
-    // Paeth: curr[x] = curr[x] + PaethPredictor(curr[x-bpp], prev[x], prev[x-bpp])
-    pass ERR_OK;
+// Paeth predictor function (RFC 2083 §6.6).
+// Returns the value a, b, or c closest (by absolute difference) to p = a+b-c.
+func:_paeth_predictor = int32(int32:a, int32:b, int32:c) {
+    int32:p  = a + b - c;
+    int32:pa = p - a; if (pa < 0i32) { pa = 0i32 - pa; }
+    int32:pb = p - b; if (pb < 0i32) { pb = 0i32 - pb; }
+    int32:pc = p - c; if (pc < 0i32) { pc = 0i32 - pc; }
+    if (pa <= pb & pa <= pc) { pass a; }
+    if (pb <= pc) { pass b; }
+    pass c;
+};
+
+// Filter 0: None — scanline is stored as-is; nothing to do.
+func:_unfilter_none = NIL(int64:curr_ptr, int64:prev_ptr, int32:bpp, int32:width_bytes) {
+    pass;
+};
+
+// Filter 1: Sub — each byte is relative to the byte bpp positions to the left.
+//   curr[x] += curr[x - bpp]   (left sample; 0 when x < bpp)
+func:_unfilter_sub = NIL(int64:curr_ptr, int64:prev_ptr, int32:bpp, int32:width_bytes) {
+    int64:curr = curr_ptr;
+    int32:x = 0i32;
+    while (x < width_bytes) {
+        int32:val   = @cast_unchecked<int32>(raw load8(curr + @cast_unchecked<int64>(x))) & 255i32;
+        int32:left  = 0i32;
+        if (x >= bpp) {
+            left = @cast_unchecked<int32>(raw load8(curr + @cast_unchecked<int64>(x - bpp))) & 255i32;
+        }
+        drop raw store8(curr + @cast_unchecked<int64>(x), @cast_unchecked<int8>((val + left) & 255i32));
+        x = x + 1i32;
+    }
+    pass;
+};
+
+// Filter 2: Up — each byte is relative to the byte directly above in the previous row.
+//   curr[x] += prev[x]
+func:_unfilter_up = NIL(int64:curr_ptr, int64:prev_ptr, int32:bpp, int32:width_bytes) {
+    int64:curr = curr_ptr;
+    int64:prev = prev_ptr;
+    int32:x = 0i32;
+    while (x < width_bytes) {
+        int64:xi = @cast_unchecked<int64>(x);
+        int32:val  = @cast_unchecked<int32>(raw load8(curr + xi)) & 255i32;
+        int32:up   = @cast_unchecked<int32>(raw load8(prev + xi)) & 255i32;
+        drop raw store8(curr + xi, @cast_unchecked<int8>((val + up) & 255i32));
+        x = x + 1i32;
+    }
+    pass;
+};
+
+// Filter 3: Average — each byte relative to floor((left + up) / 2).
+//   curr[x] += floor((curr[x-bpp] + prev[x]) / 2)
+func:_unfilter_average = NIL(int64:curr_ptr, int64:prev_ptr, int32:bpp, int32:width_bytes) {
+    int64:curr = curr_ptr;
+    int64:prev = prev_ptr;
+    int32:x = 0i32;
+    while (x < width_bytes) {
+        int64:xi = @cast_unchecked<int64>(x);
+        int32:val  = @cast_unchecked<int32>(raw load8(curr + xi)) & 255i32;
+        int32:up   = @cast_unchecked<int32>(raw load8(prev + xi)) & 255i32;
+        int32:left = 0i32;
+        if (x >= bpp) {
+            left = @cast_unchecked<int32>(raw load8(curr + @cast_unchecked<int64>(x - bpp))) & 255i32;
+        }
+        int32:avg = (left + up) / 2i32; // integer floor division
+        drop raw store8(curr + xi, @cast_unchecked<int8>((val + avg) & 255i32));
+        x = x + 1i32;
+    }
+    pass;
+};
+
+// Filter 4: Paeth — each byte predicted by Paeth(left, up, upper-left).
+//   curr[x] += PaethPredictor(curr[x-bpp], prev[x], prev[x-bpp])
+func:_unfilter_paeth = NIL(int64:curr_ptr, int64:prev_ptr, int32:bpp, int32:width_bytes) {
+    int64:curr = curr_ptr;
+    int64:prev = prev_ptr;
+    int32:x = 0i32;
+    while (x < width_bytes) {
+        int64:xi = @cast_unchecked<int64>(x);
+        int32:val        = @cast_unchecked<int32>(raw load8(curr + xi)) & 255i32;
+        int32:up         = @cast_unchecked<int32>(raw load8(prev + xi)) & 255i32;
+        int32:left       = 0i32;
+        int32:upper_left = 0i32;
+        if (x >= bpp) {
+            left       = @cast_unchecked<int32>(raw load8(curr + @cast_unchecked<int64>(x - bpp))) & 255i32;
+            upper_left = @cast_unchecked<int32>(raw load8(prev + @cast_unchecked<int64>(x - bpp))) & 255i32;
+        }
+        int32:pred = raw _paeth_predictor(left, up, upper_left);
+        drop raw store8(curr + xi, @cast_unchecked<int8>((val + pred) & 255i32));
+        x = x + 1i32;
+    }
+    pass;
+};
+
+// Unfilter a single scanline in-place.
+// filter_type: 0=None, 1=Sub, 2=Up, 3=Average, 4=Paeth
+// Returns ERR_OK or ERR_PNG_UNSUPPORTED for unknown filter type.
+pub func:png_unfilter_scanline = int32(int32:filter_type,
+                                       int64:curr_ptr, int64:prev_ptr,
+                                       int32:bpp, int32:width_bytes) {
+    if (filter_type == FILTER_NONE) {
+        drop _unfilter_none(curr_ptr, prev_ptr, bpp, width_bytes);
+        pass ERR_OK;
+    }
+    if (filter_type == FILTER_SUB) {
+        drop _unfilter_sub(curr_ptr, prev_ptr, bpp, width_bytes);
+        pass ERR_OK;
+    }
+    if (filter_type == FILTER_UP) {
+        drop _unfilter_up(curr_ptr, prev_ptr, bpp, width_bytes);
+        pass ERR_OK;
+    }
+    if (filter_type == FILTER_AVERAGE) {
+        drop _unfilter_average(curr_ptr, prev_ptr, bpp, width_bytes);
+        pass ERR_OK;
+    }
+    if (filter_type == FILTER_PAETH) {
+        drop _unfilter_paeth(curr_ptr, prev_ptr, bpp, width_bytes);
+        pass ERR_OK;
+    }
+    pass ERR_PNG_UNSUPPORTED;
 };
