@@ -1,34 +1,80 @@
+// test/test_buffer.npk — Tests for ImageBuffer operations.
 use "../src/color.npk".*;
 use "../src/buffer.npk".*;
+use "../src/mem.npk".*;
+use "../src/errors.npk".*;
 
-pub func:failsafe = int32(tbb32:err) { drop(err);
-    exit(1i32);
-};
+pub func:failsafe = int32(tbb32:err) { drop(err); exit(1i32); };
 
 pub func:main = int32() {
-    // Test size calculation
-    drop(imagebuffer_calculate_size_bytes(100i32, 100i32, COLOR_RGBA));
+    int32:status = 0i32;
+
+    // =========================================================
+    // TEST 1: imagebuffer_size_bytes
+    // =========================================================
+    int64:sz = raw imagebuffer_size_bytes(100i32, 100i32);
+    if (sz != 40000i64) { status = 1i32; } // 100*100*4 = 40000
+
+    // =========================================================
+    // TEST 2: init / set_pixel / get_pixel
+    // =========================================================
+    wild int8->:raw_px = nodrop alloc(sz);
+    int64:px_addr = @cast_unchecked<int64>(raw_px);
 
     ImageBuffer:buf = ImageBuffer{data: 0i64, width: 0i32, height: 0i32, stride: 0i32, color_type: 0i32};
-    drop(imagebuffer_init(@buf, 100i32, 100i32, COLOR_RGBA));
-    
-    PixelRGBA:pix = PixelRGBA{r: 255i32, g: 0i32, b: 0i32, a: 255i32};
-    drop(color_rgb_to_rgba(@pix, 255i32, 128i32, 64i32));
-    drop(color_grayscale_to_rgba(@pix, 128i32));
-    
-    drop(imagebuffer_set_pixel(@buf, 10i32, 10i32, @pix));
-    
-    PixelRGBA:out_pix = PixelRGBA{r: 0i32, g: 0i32, b: 0i32, a: 0i32};
-    drop(imagebuffer_get_pixel(@buf, 10i32, 10i32, @out_pix));
-    
-    ImageIterator:iter = ImageIterator{buffer_ptr: 0i64, x: 0i32, y: 0i32, max_x: 0i32, max_y: 0i32};
-    drop(imageiter_init(@iter, @buf));
-    drop(imageiter_next(@iter));
-    
-    drop(buf);
-    drop(pix);
-    drop(out_pix);
-    drop(iter);
-    
-    exit(0i32);
+    drop imagebuffer_init(@buf, px_addr, 100i32, 100i32);
+    if (buf.width != 100i32)  { status = 2i32; }
+    if (buf.height != 100i32) { status = 3i32; }
+    if (buf.stride != 400i32) { status = 4i32; } // 100 * 4
+
+    // Set (10,10) to red
+    int32:set_res = raw imagebuffer_set_pixel(@buf, 10i32, 10i32, 255i32, 0i32, 0i32, 255i32);
+    if (set_res != ERR_OK) { status = 5i32; }
+
+    // Read (10,10) back
+    int32:gr = 0i32;
+    int32:gg = 0i32;
+    int32:gb = 0i32;
+    int32:ga = 0i32;
+    int32:get_res = raw imagebuffer_get_pixel(@buf, 10i32, 10i32, @gr, @gg, @gb, @ga);
+    if (get_res != ERR_OK) { status = 6i32; }
+    if (gr != 255i32) { status = 7i32; }
+    if (gg != 0i32)   { status = 8i32; }
+    if (gb != 0i32)   { status = 9i32; }
+    if (ga != 255i32) { status = 10i32; }
+
+    // =========================================================
+    // TEST 3: out-of-bounds returns ERR_OUT_OF_BOUNDS
+    // =========================================================
+    int32:oob = raw imagebuffer_set_pixel(@buf, 200i32, 10i32, 0i32, 0i32, 0i32, 0i32);
+    if (oob != ERR_OUT_OF_BOUNDS) { status = 11i32; }
+
+    // =========================================================
+    // TEST 4: imagebuffer_clear zeros all pixels
+    // =========================================================
+    drop imagebuffer_clear(@buf);
+    int32:cr = 255i32; // non-zero so we can detect change
+    int32:cg = 255i32;
+    int32:cb = 255i32;
+    int32:ca = 255i32;
+    drop imagebuffer_get_pixel(@buf, 10i32, 10i32, @cr, @cg, @cb, @ca);
+    if (cr != 0i32) { status = 12i32; }
+    if (cg != 0i32) { status = 13i32; }
+
+    // =========================================================
+    // TEST 5: ImageIterator traversal
+    // =========================================================
+    ImageIterator:iter = ImageIterator{buffer_ptr: 0i64, x: 0i32, y: 0i32, max_x: 0i32, max_y: 0i32, stride: 0i32};
+    drop imageiter_init(@iter, @buf);
+    if (iter.max_x != 100i32) { status = 14i32; }
+    if (iter.max_y != 100i32) { status = 15i32; }
+    int32:nxt = raw imageiter_next(@iter);
+    if (nxt != 1i32) { status = 16i32; }
+    if (iter.x != 1i32) { status = 17i32; }
+
+    // =========================================================
+    // Cleanup
+    // =========================================================
+    dalloc(raw_px);
+    exit status;
 };

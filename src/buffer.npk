@@ -1,73 +1,115 @@
-// buffer.npk
+// buffer.npk — ImageBuffer: pixel buffer for decoded images.
+//
+// Layout: raw RGBA (4 bytes per pixel), row-major, no padding.
+//   pixel(x, y) is at byte offset: y * stride + x * 4
+//   stride = width * 4
+//
+// Memory: `data` is a raw heap address (int64). Caller must allocate with
+//   `nodrop alloc(imagebuffer_size_bytes(w, h))` before calling init,
+//   and free it when done.
+//
+// Security invariants:
+//   - imagebuffer_set_pixel / get_pixel are bounds-checked (x < width, y < height).
+//   - Out-of-bounds access returns ERR_OUT_OF_BOUNDS (-1).
+
 use "color.npk".*;
+use "mem.npk".*;
+use "errors.npk".*;
 
 pub struct:ImageBuffer = {
-    int64:data; // Raw dynamically allocated bytes
+    int64:data;      // raw address of pixel bytes (caller-owned)
     int32:width;
     int32:height;
-    int32:stride;
-    int32:color_type;
+    int32:stride;    // bytes per row = width * 4
+    int32:color_type; // PNG color_type constant from color.npk
 };
 
-
-// Memory allocator helper for callers
-pub func:imagebuffer_calculate_size_bytes = int64(int32:width, int32:height, int32:color_type) {
-    // Stub calculation based on bpp derived from color_type and width * height
-    pass 0i64;
+// Returns the number of bytes needed for an RGBA image of the given dimensions.
+pub func:imagebuffer_size_bytes = int64(int32:width, int32:height) {
+    pass @cast_unchecked<int64>(width * height * 4i32);
 };
 
-pub func:imagebuffer_init = NIL(wild ImageBuffer-> : buf, int32:width, int32:height, int32:color_type) {
-    buf->width = width;
-    buf->height = height;
-    buf->color_type = color_type;
-    
-    // Stub: compute stride based on color type
-    // e.g., if RGBA (4 bytes per pixel), stride = width * 4;
-    buf->stride = width * 4i32; 
-    
-    // In actual logic, we would use raw npk_core_alloc(stride * height);
-    buf->data = 0i64; // Stub
+// Initialise an ImageBuffer. `data` must point to at least
+// imagebuffer_size_bytes(width, height) bytes.
+pub func:imagebuffer_init = NIL(wild ImageBuffer-> : buf, int64:data,
+                                  int32:width, int32:height) {
+    buf->data       = data;
+    buf->width      = width;
+    buf->height     = height;
+    buf->stride     = width * 4i32;
+    buf->color_type = COLOR_RGBA;
     pass;
 };
 
-// pixel getter/setter stubs
-pub func:imagebuffer_set_pixel = NIL(wild ImageBuffer-> : buf, int32:x, int32:y, wild PixelRGBA-> : pixel) {
-    // Stub
+// Write RGBA pixel at (x, y). Returns ERR_OK or ERR_OUT_OF_BOUNDS.
+pub func:imagebuffer_set_pixel = int32(wild ImageBuffer-> : buf,
+                                        int32:x, int32:y,
+                                        int32:r, int32:g, int32:b, int32:a) {
+    if (x < 0i32 | x >= buf->width)  { pass ERR_OUT_OF_BOUNDS; }
+    if (y < 0i32 | y >= buf->height) { pass ERR_OUT_OF_BOUNDS; }
+    int64:off = @cast_unchecked<int64>(y * buf->stride + x * 4i32);
+    int64:base = buf->data + off;
+    drop raw store8(base,        @cast_unchecked<int8>(r & 255i32));
+    drop raw store8(base + 1i64, @cast_unchecked<int8>(g & 255i32));
+    drop raw store8(base + 2i64, @cast_unchecked<int8>(b & 255i32));
+    drop raw store8(base + 3i64, @cast_unchecked<int8>(a & 255i32));
+    pass ERR_OK;
+};
+
+// Read RGBA pixel at (x, y) into out_{r,g,b,a}. Returns ERR_OK or ERR_OUT_OF_BOUNDS.
+pub func:imagebuffer_get_pixel = int32(wild ImageBuffer-> : buf,
+                                        int32:x, int32:y,
+                                        wild int32-> : out_r, wild int32-> : out_g,
+                                        wild int32-> : out_b, wild int32-> : out_a) {
+    if (x < 0i32 | x >= buf->width)  { pass ERR_OUT_OF_BOUNDS; }
+    if (y < 0i32 | y >= buf->height) { pass ERR_OUT_OF_BOUNDS; }
+    int64:off  = @cast_unchecked<int64>(y * buf->stride + x * 4i32);
+    int64:base = buf->data + off;
+    out_r[0i64] = @cast_unchecked<int32>(raw load8(base))        & 255i32;
+    out_g[0i64] = @cast_unchecked<int32>(raw load8(base + 1i64)) & 255i32;
+    out_b[0i64] = @cast_unchecked<int32>(raw load8(base + 2i64)) & 255i32;
+    out_a[0i64] = @cast_unchecked<int32>(raw load8(base + 3i64)) & 255i32;
+    pass ERR_OK;
+};
+
+// Zero out the entire buffer (set all pixels to transparent black).
+pub func:imagebuffer_clear = NIL(wild ImageBuffer-> : buf) {
+    int64:total = @cast_unchecked<int64>(buf->stride * buf->height);
+    int64:i     = 0i64;
+    while (i < total) {
+        drop raw store8(buf->data + i, 0i8);
+        i = i + 1i64;
+    }
     pass;
 };
 
-pub func:imagebuffer_get_pixel = NIL(wild ImageBuffer-> : buf, int32:x, int32:y, wild PixelRGBA-> : out_pixel) {
-    // Stub
-    pass;
-};
-
-// Iterator for fast traversal
+// Iterator for sequential pixel access (more cache-friendly than repeated get_pixel).
 pub struct:ImageIterator = {
-    int64:buffer_ptr;
+    int64:buffer_ptr;  // base address of pixel data
     int32:x;
     int32:y;
     int32:max_x;
     int32:max_y;
+    int32:stride;
 };
 
 pub func:imageiter_init = NIL(wild ImageIterator-> : iter, wild ImageBuffer-> : buf) {
     iter->buffer_ptr = buf->data;
-    iter->x = 0i32;
-    iter->y = 0i32;
-    iter->max_x = buf->width;
-    iter->max_y = buf->height;
+    iter->x          = 0i32;
+    iter->y          = 0i32;
+    iter->max_x      = buf->width;
+    iter->max_y      = buf->height;
+    iter->stride     = buf->stride;
     pass;
 };
 
-// Returns 1 if successful (moved to next), 0 if at end
+// Returns 1 if there is a next pixel (and advances), 0 if done.
 pub func:imageiter_next = int32(wild ImageIterator-> : iter) {
     iter->x = iter->x + 1i32;
     if (iter->x == iter->max_x) {
         iter->x = 0i32;
         iter->y = iter->y + 1i32;
     }
-    if (iter->y == iter->max_y) {
-        pass 0i32;
-    }
+    if (iter->y >= iter->max_y) { pass 0i32; }
     pass 1i32;
 };

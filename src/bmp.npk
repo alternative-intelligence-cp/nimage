@@ -1,50 +1,172 @@
-// bmp.npk
+// bmp.npk — BMP decoder (uncompressed BI_RGB, 24bpp and 32bpp).
+//
+// Supported variants:
+//   - BITMAPINFOHEADER (40 bytes) — most common
+//   - BITMAPV4HEADER (108 bytes), BITMAPV5HEADER (124 bytes) — ignored extra fields
+//   - bpp: 24 (BGR), 32 (BGRA)
+//   - compression: 0 (BI_RGB) only
+//   - Row order: bottom-up (height positive) or top-down (height negative)
+//   - Row stride: padded to 4-byte boundary
+//
+// Pixel data is written into caller-supplied ImageBuffer (RGBA, top-down).
+//
+// Security invariants:
+//   - Magic bytes "BM" checked before any field reads.
+//   - pixel_offset must be within [14, file_size].
+//   - bpp must be 24 or 32; compression must be 0.
+//   - Row loop bounded by |height| iterations, each bounded by width.
+
 use "errors.npk".*;
 use "buffer.npk".*;
 use "color.npk".*;
+use "mem.npk".*;
 
 pub struct:BmpFileHeader = {
-    int32:file_size;
-    int32:pixel_offset;
+    int32:file_size;     // bytes in the file
+    int32:pixel_offset;  // byte offset from start of file to pixel data
 };
 
 pub struct:BmpDibHeader = {
-    int32:header_size;
-    int32:width;
-    int32:height;
-    int32:bpp;
-    int32:compression;
+    int32:header_size;   // 40, 108, or 124
+    int32:width;         // pixels
+    int32:height;        // positive = bottom-up, negative = top-down
+    int32:bpp;           // bits per pixel (24 or 32)
+    int32:compression;   // 0 = BI_RGB
 };
 
-pub func:bmp_parse_file_header = int32(wild BmpFileHeader-> : header, int64:data) {
-    // Stub: Read 14 bytes
-    // Check 'BM' magic
-    // header->file_size = ...
-    // header->pixel_offset = ...
-    header->file_size = 0i32;
-    header->pixel_offset = 0i32;
+// Parse the 14-byte BMP file header starting at `data`.
+// Returns ERR_OK or ERR_BMP_BAD_SIGNATURE.
+pub func:bmp_parse_file_header = int32(wild BmpFileHeader-> : hdr, int64:data) {
+    // Check "BM" magic (bytes 0-1)
+    int32:b0 = @cast_unchecked<int32>(raw load8(data))     & 255i32;
+    int32:b1 = @cast_unchecked<int32>(raw load8(data + 1i64)) & 255i32;
+    // 'B' = 66, 'M' = 77
+    if (b0 != 66i32) { pass ERR_BMP_BAD_SIGNATURE; }
+    if (b1 != 77i32) { pass ERR_BMP_BAD_SIGNATURE; }
+
+    hdr->file_size    = raw load_le32(data + 2i64);
+    // bytes 6-9: reserved (skip)
+    hdr->pixel_offset = raw load_le32(data + 10i64);
     pass ERR_OK;
 };
 
-pub func:bmp_parse_dib_header = int32(wild BmpDibHeader-> : header, int64:data) {
-    // Stub: Read DIB size (40, 108, 124, etc.)
-    // header->width = ...
-    // header->height = ... (negative means top-down)
-    // header->bpp = ...
-    // header->compression = ...
-    header->header_size = 40i32;
-    header->width = 0i32;
-    header->height = 0i32;
-    header->bpp = 24i32;
-    header->compression = 0i32; // BI_RGB
+// Parse the DIB header starting at `data` (offset 14 from file start).
+// Returns ERR_OK or ERR_BMP_UNSUPPORTED.
+pub func:bmp_parse_dib_header = int32(wild BmpDibHeader-> : hdr, int64:data) {
+    int32:hsize = raw load_le32(data);
+    hdr->header_size = hsize;
+
+    // Minimum supported: BITMAPINFOHEADER = 40 bytes
+    if (hsize < 40i32) { pass ERR_BMP_UNSUPPORTED; }
+
+    hdr->width       = raw load_le32(data + 4i64);
+    hdr->height      = raw load_le32(data + 8i64);  // signed; negative = top-down
+    // planes (2 bytes, offset 12) — ignore, should be 1
+    hdr->bpp         = raw load_le16(data + 14i64);
+    hdr->compression = raw load_le32(data + 16i64);
+
+    // Validate
+    if (hdr->width <= 0i32)  { pass ERR_BMP_UNSUPPORTED; }
+    if (hdr->bpp != 24i32 & hdr->bpp != 32i32) { pass ERR_BMP_UNSUPPORTED; }
+    if (hdr->compression != 0i32) { pass ERR_BMP_UNSUPPORTED; } // BI_RGB only
+
     pass ERR_OK;
 };
 
-pub func:bmp_decode_pixels = int32(wild ImageBuffer-> : out_buf, int64:pixel_data, wild BmpDibHeader-> : header) {
-    // Stub: Check if header->compression == 0i32 (BI_RGB)
-    // Stub: Loop through rows
-    // Handle 4-byte row padding: padding = (4 - ((width * bpp / 8) % 4)) % 4
-    // Read BGR pixels and write as RGB into ImageBuffer
-    // Handle top-down vs bottom-up using header->height sign
+// Decode pixels from `pixel_data` (absolute address of pixel bytes) into `out_buf`.
+// out_buf must already be initialized (imagebuffer_init called).
+// Returns ERR_OK or an error code.
+pub func:bmp_decode_pixels = int32(wild ImageBuffer-> : out_buf,
+                                    int64:pixel_data,
+                                    wild BmpDibHeader-> : hdr) {
+    if (hdr->compression != 0i32) { pass ERR_BMP_UNSUPPORTED; }
+
+    int32:width  = hdr->width;
+    int32:height = hdr->height;  // may be negative (top-down)
+    int32:bpp    = hdr->bpp;
+    int32:bytes_per_pixel = bpp / 8i32; // 3 or 4
+
+    // Determine scan direction
+    int32:is_top_down = 0i32;
+    int32:abs_height  = height;
+    if (height < 0i32) {
+        is_top_down = 1i32;
+        abs_height  = 0i32 - height;  // negate
+    }
+
+    // Row stride: BMP rows are padded to 4-byte alignment
+    int32:row_bytes_raw = width * bytes_per_pixel;
+    int32:row_padding   = (4i32 - (row_bytes_raw % 4i32)) % 4i32;
+    int32:row_stride    = row_bytes_raw + row_padding;
+
+    // Iterate over rows (BMP rows are stored bottom-up unless top-down flag)
+    int32:dst_row = 0i32;
+    while (dst_row < abs_height) {
+        // For bottom-up BMP: first stored row = last display row
+        int32:src_row = dst_row;
+        if (is_top_down == 0i32) {
+            src_row = abs_height - 1i32 - dst_row;
+        }
+
+        int64:row_addr = pixel_data + @cast_unchecked<int64>(src_row * row_stride);
+
+        int32:x = 0i32;
+        while (x < width) {
+            int64:px_addr = row_addr + @cast_unchecked<int64>(x * bytes_per_pixel);
+            // BMP stores BGR (not RGB)
+            int32:b = @cast_unchecked<int32>(raw load8(px_addr))         & 255i32;
+            int32:g = @cast_unchecked<int32>(raw load8(px_addr + 1i64)) & 255i32;
+            int32:r = @cast_unchecked<int32>(raw load8(px_addr + 2i64)) & 255i32;
+            int32:a = 255i32;
+            if (bpp == 32i32) {
+                a = @cast_unchecked<int32>(raw load8(px_addr + 3i64)) & 255i32;
+            }
+            drop imagebuffer_set_pixel(out_buf, x, dst_row, r, g, b, a);
+            x = x + 1i32;
+        }
+        dst_row = dst_row + 1i32;
+    }
+
+    pass ERR_OK;
+};
+
+// All-in-one: parse BMP from `data` (file bytes, length `data_len`).
+// Allocates an ImageBuffer internally (caller must free buf->data when done).
+// Returns ERR_OK on success, error code otherwise.
+pub func:bmp_decode = int32(wild ImageBuffer-> : out_buf, int64:data, int64:data_len) {
+    if (data_len < 54i64) { pass ERR_BMP_BAD_SIGNATURE; } // minimum valid BMP
+
+    BmpFileHeader:fhdr = BmpFileHeader{file_size: 0i32, pixel_offset: 0i32};
+    int32:fhdr_res = raw bmp_parse_file_header(@fhdr, data);
+    if (fhdr_res != ERR_OK) { pass fhdr_res; }
+
+    // DIB header starts at byte 14
+    BmpDibHeader:dhdr = BmpDibHeader{header_size: 0i32, width: 0i32, height: 0i32, bpp: 0i32, compression: 0i32};
+    int32:dhdr_res = raw bmp_parse_dib_header(@dhdr, data + 14i64);
+    if (dhdr_res != ERR_OK) { pass dhdr_res; }
+
+    int32:abs_height = dhdr.height;
+    if (abs_height < 0i32) { abs_height = 0i32 - abs_height; }
+
+    // Validate pixel_offset
+    if (fhdr.pixel_offset < 14i32) { pass ERR_BMP_BAD_SIGNATURE; }
+
+    // Allocate pixel buffer
+    int64:buf_size = raw imagebuffer_size_bytes(dhdr.width, abs_height);
+    wild int8->:px_buf = nodrop alloc(buf_size);
+    int64:px_addr = @cast_unchecked<int64>(px_buf);
+    drop imagebuffer_init(out_buf, px_addr, dhdr.width, abs_height);
+
+    // Decode pixels
+    int64:pixel_data = data + @cast_unchecked<int64>(fhdr.pixel_offset);
+    int32:decode_res = raw bmp_decode_pixels(out_buf, pixel_data, @dhdr);
+    if (decode_res != ERR_OK) {
+        dalloc(px_buf);
+        out_buf->data = 0i64;
+        pass decode_res;
+    }
+
+    // px_buf is now owned by out_buf->data; caller must free it
+    // We use nodrop so px_buf going out of scope doesn't free it
     pass ERR_OK;
 };

@@ -1,24 +1,142 @@
+// test/test_bmp.npk
+// Tests for bmp.npk — BMP file parsing and pixel decoding.
+//
+// Test uses an in-memory 2x2 px 24bpp BMP (70 bytes):
+//   Display layout (RGBA after decode):
+//     (x=0,y=0) = blue   = [0,0,255,255]
+//     (x=1,y=0) = yellow = [255,255,0,255]
+//     (x=0,y=1) = red    = [255,0,0,255]
+//     (x=1,y=1) = green  = [0,255,0,255]
+//   BMP encoding: bottom-up, BGR, 2-byte row padding.
 use "../src/bmp.npk".*;
 use "../src/buffer.npk".*;
 use "../src/errors.npk".*;
+use "../src/mem.npk".*;
 
-pub func:failsafe = int32(tbb32:err) { drop(err);
-    exit(1i32);
-};
+pub func:failsafe = int32(tbb32:err) { drop(err); exit(1i32); };
 
 pub func:main = int32() {
+    int32:status = 0i32;
+
+    // =========================================================
+    // Build 2x2 BMP in memory (70 bytes)
+    // =========================================================
+    wild int8->:bmp_data = nodrop alloc(80i64);
+    int64:addr = @cast_unchecked<int64>(bmp_data);
+
+    // Zero-fill
+    int64:zi = 0i64;
+    while (zi < 80i64) { drop raw store8(addr + zi, 0i8); zi = zi + 1i64; }
+
+    // File header
+    drop raw store8(addr + 0i64,  66i8);  // 'B'
+    drop raw store8(addr + 1i64,  77i8);  // 'M'
+    drop raw store8(addr + 2i64,  70i8);  // file_size = 70
+    drop raw store8(addr + 10i64, 54i8);  // pixel_offset = 54
+
+    // DIB header at offset 14
+    drop raw store8(addr + 14i64, 40i8);  // header_size = 40
+    drop raw store8(addr + 18i64,  2i8);  // width = 2
+    drop raw store8(addr + 22i64,  2i8);  // height = 2 (bottom-up)
+    drop raw store8(addr + 26i64,  1i8);  // planes = 1
+    drop raw store8(addr + 28i64, 24i8);  // bpp = 24
+    drop raw store8(addr + 34i64, 16i8);  // image_size = 16
+
+    // Pixel data at offset 54 (BGR, bottom-up, 2-byte row padding):
+    // Row 0 (bottom = display y=1): red, green, padding
+    drop raw store8(addr + 54i64,  0i8);  // B of red
+    drop raw store8(addr + 55i64,  0i8);  // G of red
+    drop raw store8(addr + 56i64, -1i8);  // R of red (255)
+    drop raw store8(addr + 57i64,  0i8);  // B of green
+    drop raw store8(addr + 58i64, -1i8);  // G of green (255)
+    drop raw store8(addr + 59i64,  0i8);  // R of green
+    // bytes 60-61: padding = 0 (already zeroed)
+
+    // Row 1 (top = display y=0): blue, yellow, padding
+    drop raw store8(addr + 62i64, -1i8);  // B of blue (255)
+    drop raw store8(addr + 63i64,  0i8);  // G of blue
+    drop raw store8(addr + 64i64,  0i8);  // R of blue
+    drop raw store8(addr + 65i64,  0i8);  // B of yellow
+    drop raw store8(addr + 66i64, -1i8);  // G of yellow (255)
+    drop raw store8(addr + 67i64, -1i8);  // R of yellow (255)
+    // bytes 68-69: padding = 0
+
+    // =========================================================
+    // TEST 1: Parse file header
+    // =========================================================
     BmpFileHeader:fhdr = BmpFileHeader{file_size: 0i32, pixel_offset: 0i32};
-    drop(bmp_parse_file_header(@fhdr, 0i64));
-    
+    int32:fhdr_res = raw bmp_parse_file_header(@fhdr, addr);
+    if (fhdr_res != ERR_OK)          { status = 1i32; }
+    if (fhdr.file_size != 70i32)     { status = 2i32; }
+    if (fhdr.pixel_offset != 54i32)  { status = 3i32; }
+
+    // =========================================================
+    // TEST 2: Parse DIB header
+    // =========================================================
     BmpDibHeader:dhdr = BmpDibHeader{header_size: 0i32, width: 0i32, height: 0i32, bpp: 0i32, compression: 0i32};
-    drop(bmp_parse_dib_header(@dhdr, 0i64));
-    
-    ImageBuffer:buf = ImageBuffer{data: 0i64, width: 0i32, height: 0i32, stride: 0i32, color_type: 0i32};
-    drop(bmp_decode_pixels(@buf, 0i64, @dhdr));
-    
-    drop(fhdr);
-    drop(dhdr);
-    drop(buf);
-    
-    exit(0i32);
+    int32:dhdr_res = raw bmp_parse_dib_header(@dhdr, addr + 14i64);
+    if (dhdr_res != ERR_OK)        { status = 4i32; }
+    if (dhdr.width  != 2i32)       { status = 5i32; }
+    if (dhdr.height != 2i32)       { status = 6i32; }
+    if (dhdr.bpp    != 24i32)      { status = 7i32; }
+    if (dhdr.compression != 0i32)  { status = 8i32; }
+
+    // =========================================================
+    // TEST 3: Full decode via bmp_decode
+    // =========================================================
+    ImageBuffer:img = ImageBuffer{data: 0i64, width: 0i32, height: 0i32, stride: 0i32, color_type: 0i32};
+    int32:decode_res = raw bmp_decode(@img, addr, 70i64);
+    if (decode_res != ERR_OK) { status = 9i32; }
+    if (img.width  != 2i32)   { status = 10i32; }
+    if (img.height != 2i32)   { status = 11i32; }
+
+    // =========================================================
+    // TEST 4: Verify decoded pixel values
+    // =========================================================
+    int32:pr = 0i32;
+    int32:pg = 0i32;
+    int32:pb = 0i32;
+    int32:pa = 0i32;
+
+    // (0,0) should be blue: R=0, G=0, B=255, A=255
+    drop imagebuffer_get_pixel(@img, 0i32, 0i32, @pr, @pg, @pb, @pa);
+    if (pr != 0i32)   { status = 20i32; }
+    if (pg != 0i32)   { status = 21i32; }
+    if (pb != 255i32) { status = 22i32; }
+    if (pa != 255i32) { status = 23i32; }
+
+    // (1,0) should be yellow: R=255, G=255, B=0, A=255
+    drop imagebuffer_get_pixel(@img, 1i32, 0i32, @pr, @pg, @pb, @pa);
+    if (pr != 255i32) { status = 24i32; }
+    if (pg != 255i32) { status = 25i32; }
+    if (pb != 0i32)   { status = 26i32; }
+
+    // (0,1) should be red: R=255, G=0, B=0, A=255
+    drop imagebuffer_get_pixel(@img, 0i32, 1i32, @pr, @pg, @pb, @pa);
+    if (pr != 255i32) { status = 27i32; }
+    if (pg != 0i32)   { status = 28i32; }
+    if (pb != 0i32)   { status = 29i32; }
+
+    // (1,1) should be green: R=0, G=255, B=0, A=255
+    drop imagebuffer_get_pixel(@img, 1i32, 1i32, @pr, @pg, @pb, @pa);
+    if (pr != 0i32)   { status = 30i32; }
+    if (pg != 255i32) { status = 31i32; }
+    if (pb != 0i32)   { status = 32i32; }
+
+    // =========================================================
+    // TEST 5: Bad magic returns ERR_BMP_BAD_SIGNATURE
+    // =========================================================
+    drop raw store8(addr, 0i8); // corrupt magic byte
+    BmpFileHeader:bad_fhdr = BmpFileHeader{file_size: 0i32, pixel_offset: 0i32};
+    int32:bad_res = raw bmp_parse_file_header(@bad_fhdr, addr);
+    if (bad_res != ERR_BMP_BAD_SIGNATURE) { status = 40i32; }
+
+    // =========================================================
+    // Cleanup: free the pixel buffer allocated by bmp_decode
+    // =========================================================
+    wild int8->:px_ptr = nodrop @cast_unchecked<int8->>(img.data);
+    dalloc(px_ptr);
+    dalloc(bmp_data);
+
+    exit status;
 };

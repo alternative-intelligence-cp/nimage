@@ -1,0 +1,58 @@
+// mem.npk — raw memory helpers for nimage
+// Uses int64/int32 aligned loads to avoid managed pointer lifecycle issues.
+
+pub func:store64 = int8(int64:addr, int64:val) {
+    int64->:ptr = @cast_unchecked<int64->>(addr);
+    ptr[0i64] = val;
+    pass 0i8;
+};
+
+pub func:load64 = int64(int64:addr) {
+    int64->:ptr = @cast_unchecked<int64->>(addr);
+    pass ptr[0i64];
+};
+
+pub func:store32 = int8(int64:addr, int32:val) {
+    int32->:ptr = @cast_unchecked<int32->>(addr);
+    ptr[0i64] = val;
+    pass 0i8;
+};
+
+pub func:load32 = int32(int64:addr) {
+    int32->:ptr = @cast_unchecked<int32->>(addr);
+    pass ptr[0i64];
+};
+
+pub func:store8 = int8(int64:addr, int8:val) {
+    int8->:ptr = @cast_unchecked<int8->>(addr);
+    ptr[0i64] = val;
+    pass 0i8;
+};
+
+// load8: reads one byte using aligned int64 load + shift.
+// Avoids managed int8-> pointer that gets freed on scope exit.
+pub func:load8 = int8(int64:addr) {
+    int64:aligned = addr & -8i64;
+    int64->:ptr   = @cast_unchecked<int64->>(aligned);
+    int64:word    = ptr[0i64];
+    int64:offset  = (addr & 7i64) * 8i64;
+    int32:shift   = @cast_unchecked<int32>(offset);
+    int32:byte    = @cast_unchecked<int32>(word >> @cast_unchecked<int64>(shift)) & 255i32;
+    pass @cast_unchecked<int8>(byte);
+};
+
+// Read a little-endian uint16 from addr (may be unaligned).
+pub func:load_le16 = int32(int64:addr) {
+    int32:b0 = @cast_unchecked<int32>(raw load8(addr))     & 255i32;
+    int32:b1 = @cast_unchecked<int32>(raw load8(addr + 1i64)) & 255i32;
+    pass b0 | (b1 << 8i32);
+};
+
+// Read a little-endian uint32 from addr (may be unaligned).
+pub func:load_le32 = int32(int64:addr) {
+    int32:b0 = @cast_unchecked<int32>(raw load8(addr))         & 255i32;
+    int32:b1 = @cast_unchecked<int32>(raw load8(addr + 1i64)) & 255i32;
+    int32:b2 = @cast_unchecked<int32>(raw load8(addr + 2i64)) & 255i32;
+    int32:b3 = @cast_unchecked<int32>(raw load8(addr + 3i64)) & 255i32;
+    pass b0 | (b1 << 8i32) | (b2 << 16i32) | (b3 << 24i32);
+};
