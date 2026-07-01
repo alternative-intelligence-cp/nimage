@@ -1,0 +1,214 @@
+// test/test_png.npk
+// Test for PNG decoder.
+//
+// Uses a 2x2 RGBA PNG with zlib level 0 (uncompressed DEFLATE BTYPE=00)
+// Pixels: Red(0,0), Green(1,0), Blue(0,1), White(1,1)
+//
+// PNG file (86 bytes):
+// [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+//  0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0, 114, 182, 13, 36,
+//  0, 0, 0, 29, 73, 68, 65, 84,
+//  120, 1, 1, 18, 0, 237, 255, 0, 255, 0, 0, 255, 0, 255, 0, 255,
+//  0, 0, 0, 255, 255, 255, 255, 255, 255, 73, 200, 9, 247,
+//  173, 171, 86, 27,
+//  0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]
+
+use "../src/png.npk".*;
+use "../src/buffer.npk".*;
+use "../src/errors.npk".*;
+use "../src/mem.npk".*;
+
+pub func:failsafe = int32(tbb32:err) { drop(err); exit(1i32); };
+
+pub func:main = int32() {
+    int32:status = 0i32;
+
+    // PNG file bytes (86 bytes)
+    int64:png_len = 86i64;
+    wild int8->:png_raw = nodrop alloc(128i64);
+    int64:p = @cast_unchecked<int64>(png_raw);
+
+    // Write all 86 bytes
+    // PNG Signature (8 bytes)
+    drop raw store8(p + 0i64, @cast_unchecked<int8>(137i32));
+    drop raw store8(p + 1i64, 80i8);
+    drop raw store8(p + 2i64, 78i8);
+    drop raw store8(p + 3i64, 71i8);
+    drop raw store8(p + 4i64, 13i8);
+    drop raw store8(p + 5i64, 10i8);
+    drop raw store8(p + 6i64, 26i8);
+    drop raw store8(p + 7i64, 10i8);
+
+    // IHDR chunk (25 bytes: 4 len + 4 type + 13 data + 4 crc)
+    drop raw store8(p + 8i64, 0i8);
+    drop raw store8(p + 9i64, 0i8);
+    drop raw store8(p + 10i64, 0i8);
+    drop raw store8(p + 11i64, 13i8);
+
+    drop raw store8(p + 12i64, 73i8);  // I
+    drop raw store8(p + 13i64, 72i8);  // H
+    drop raw store8(p + 14i64, 68i8);  // D
+    drop raw store8(p + 15i64, 82i8);  // R
+
+    drop raw store8(p + 16i64, 0i8);
+    drop raw store8(p + 17i64, 0i8);
+    drop raw store8(p + 18i64, 0i8);
+    drop raw store8(p + 19i64, 2i8);   // width = 2
+    drop raw store8(p + 20i64, 0i8);
+    drop raw store8(p + 21i64, 0i8);
+    drop raw store8(p + 22i64, 0i8);
+    drop raw store8(p + 23i64, 2i8);   // height = 2
+    drop raw store8(p + 24i64, 8i8);   // bit_depth = 8
+    drop raw store8(p + 25i64, 6i8);   // color_type = 6 (RGBA)
+    drop raw store8(p + 26i64, 0i8);   // compression
+    drop raw store8(p + 27i64, 0i8);   // filter
+    drop raw store8(p + 28i64, 0i8);   // interlace
+
+    drop raw store8(p + 29i64, 114i8);
+    drop raw store8(p + 30i64, @cast_unchecked<int8>(182i32));
+    drop raw store8(p + 31i64, 13i8);
+    drop raw store8(p + 32i64, 36i8);  // IHDR CRC
+
+    // IDAT chunk (41 bytes: 4 len + 4 type + 29 data + 4 crc)
+    drop raw store8(p + 33i64, 0i8);
+    drop raw store8(p + 34i64, 0i8);
+    drop raw store8(p + 35i64, 0i8);
+    drop raw store8(p + 36i64, 29i8);  // length = 29
+
+    drop raw store8(p + 37i64, 73i8);  // I
+    drop raw store8(p + 38i64, 68i8);  // D
+    drop raw store8(p + 39i64, 65i8);  // A
+    drop raw store8(p + 40i64, 84i8);  // T
+
+    // zlib compressed data (29 bytes, level 0 = uncompressed DEFLATE)
+    // [120, 1, 1, 18, 0, 237, 255, 0, 255, 0, 0, 255, 0, 255, 0, 255,
+    //  0, 0, 0, 255, 255, 255, 255, 255, 255, 73, 200, 9, 247]
+    drop raw store8(p + 41i64, 120i8);   // CMF (CM=8, CINFO=7)
+    drop raw store8(p + 42i64, 1i8);     // FLG
+    drop raw store8(p + 43i64, 1i8);     // BFINAL=1, BTYPE=00
+    drop raw store8(p + 44i64, 18i8);    // LEN low = 18
+    drop raw store8(p + 45i64, 0i8);     // LEN high = 0
+    drop raw store8(p + 46i64, @cast_unchecked<int8>(237i32)); // NLEN low
+    drop raw store8(p + 47i64, @cast_unchecked<int8>(255i32)); // NLEN high
+
+    // Raw scanline data (18 bytes)
+    // Row 0: filter=0, R=255, G=0, B=0, A=255, R=0, G=255, B=0, A=255
+    drop raw store8(p + 48i64, 0i8);     // filter byte
+    drop raw store8(p + 49i64, @cast_unchecked<int8>(255i32)); // R
+    drop raw store8(p + 50i64, 0i8);     // G
+    drop raw store8(p + 51i64, 0i8);     // B
+    drop raw store8(p + 52i64, @cast_unchecked<int8>(255i32)); // A
+    drop raw store8(p + 53i64, 0i8);     // R
+    drop raw store8(p + 54i64, @cast_unchecked<int8>(255i32)); // G
+    drop raw store8(p + 55i64, 0i8);     // B
+    drop raw store8(p + 56i64, @cast_unchecked<int8>(255i32)); // A
+
+    // Row 1: filter=0, R=0, G=0, B=255, A=255, R=255, G=255, B=255, A=255
+    drop raw store8(p + 57i64, 0i8);     // filter byte
+    drop raw store8(p + 58i64, 0i8);     // R
+    drop raw store8(p + 59i64, 0i8);     // G
+    drop raw store8(p + 60i64, @cast_unchecked<int8>(255i32)); // B
+    drop raw store8(p + 61i64, @cast_unchecked<int8>(255i32)); // A
+    drop raw store8(p + 62i64, @cast_unchecked<int8>(255i32)); // R
+    drop raw store8(p + 63i64, @cast_unchecked<int8>(255i32)); // G
+    drop raw store8(p + 64i64, @cast_unchecked<int8>(255i32)); // B
+    drop raw store8(p + 65i64, @cast_unchecked<int8>(255i32)); // A
+
+    // Adler32 checksum (big-endian): 73, 200, 9, 247
+    drop raw store8(p + 66i64, 73i8);
+    drop raw store8(p + 67i64, @cast_unchecked<int8>(200i32));
+    drop raw store8(p + 68i64, 9i8);
+    drop raw store8(p + 69i64, @cast_unchecked<int8>(247i32));
+
+    // IDAT CRC: [173, 171, 86, 27]
+    drop raw store8(p + 70i64, @cast_unchecked<int8>(173i32));
+    drop raw store8(p + 71i64, @cast_unchecked<int8>(171i32));
+    drop raw store8(p + 72i64, 86i8);
+    drop raw store8(p + 73i64, 27i8);
+
+    // IEND chunk (12 bytes: 4 len + 4 type + 0 data + 4 crc)
+    drop raw store8(p + 74i64, 0i8);
+    drop raw store8(p + 75i64, 0i8);
+    drop raw store8(p + 76i64, 0i8);
+    drop raw store8(p + 77i64, 0i8);   // length = 0
+
+    drop raw store8(p + 78i64, 73i8);  // I
+    drop raw store8(p + 79i64, 69i8);  // E
+    drop raw store8(p + 80i64, 78i8);  // N
+    drop raw store8(p + 81i64, 68i8);  // D
+
+    // IEND CRC: [174, 66, 96, 130]
+    drop raw store8(p + 82i64, @cast_unchecked<int8>(174i32));
+    drop raw store8(p + 83i64, 66i8);
+    drop raw store8(p + 84i64, 96i8);
+    drop raw store8(p + 85i64, @cast_unchecked<int8>(130i32));
+
+    // Decode PNG
+    ImageBuffer:img = ImageBuffer{data: 0i64, width: 0i32, height: 0i32,
+                                   stride: 0i32, color_type: 0i32};
+    int32:result = raw png_decode(p, png_len, @img);
+
+    if (result != ERR_OK) {
+        // Convert negative error to positive for exit code visibility
+        status = 0i32 - result; // e.g. -(-102) = 102
+    }
+
+    // Verify dimensions
+    if (status == 0i32) {
+        if (img.width != 2i32)  { status = 200i32; }
+        if (img.height != 2i32) { status = 201i32; }
+    }
+
+    // Check pixel (0,0) = Red = (255, 0, 0, 255)
+    if (status == 0i32) {
+        stack int32:rr = 0i32;
+        stack int32:gg = 0i32;
+        stack int32:bb = 0i32;
+        stack int32:aa = 0i32;
+        drop raw imagebuffer_get_pixel(@img, 0i32, 0i32, @rr, @gg, @bb, @aa);
+        if (rr != 255i32) { status = 210i32; }
+        if (gg != 0i32)   { status = 211i32; }
+        if (bb != 0i32)   { status = 212i32; }
+        if (aa != 255i32) { status = 213i32; }
+    }
+
+    // Check pixel (1,0) = Green = (0, 255, 0, 255)
+    if (status == 0i32) {
+        stack int32:rr2 = 0i32;
+        stack int32:gg2 = 0i32;
+        stack int32:bb2 = 0i32;
+        stack int32:aa2 = 0i32;
+        drop raw imagebuffer_get_pixel(@img, 1i32, 0i32, @rr2, @gg2, @bb2, @aa2);
+        if (rr2 != 0i32)   { status = 220i32; }
+        if (gg2 != 255i32) { status = 221i32; }
+        if (bb2 != 0i32)   { status = 222i32; }
+    }
+
+    // Check pixel (0,1) = Blue = (0, 0, 255, 255)
+    if (status == 0i32) {
+        stack int32:rr3 = 0i32;
+        stack int32:gg3 = 0i32;
+        stack int32:bb3 = 0i32;
+        stack int32:aa3 = 0i32;
+        drop raw imagebuffer_get_pixel(@img, 0i32, 1i32, @rr3, @gg3, @bb3, @aa3);
+        if (rr3 != 0i32)   { status = 230i32; }
+        if (gg3 != 0i32)   { status = 231i32; }
+        if (bb3 != 255i32) { status = 232i32; }
+    }
+
+    // Check pixel (1,1) = White = (255, 255, 255, 255)
+    if (status == 0i32) {
+        stack int32:rr4 = 0i32;
+        stack int32:gg4 = 0i32;
+        stack int32:bb4 = 0i32;
+        stack int32:aa4 = 0i32;
+        drop raw imagebuffer_get_pixel(@img, 1i32, 1i32, @rr4, @gg4, @bb4, @aa4);
+        if (rr4 != 255i32) { status = 240i32; }
+        if (gg4 != 255i32) { status = 241i32; }
+        if (bb4 != 255i32) { status = 242i32; }
+        if (aa4 != 255i32) { status = 243i32; }
+    }
+
+    dalloc(png_raw);
+    exit status;
+};

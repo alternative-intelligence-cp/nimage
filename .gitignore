@@ -27,3 +27,9 @@ build-*/
 *.swp
 *~
 .DS_Store
+test/test_bmp
+test/test_buffer
+test/test_gif
+test/test_png
+test/test_png_parse
+test/test_png_decode
